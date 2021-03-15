@@ -73,6 +73,8 @@ public:
 
     bool isOutput;
 
+    TRandom3 My_Rnd;
+
     Simulation();
     virtual ~Simulation();
     void SetMaterialProperty(const char *nfilename, const char *kapafilename, const char *alphafilename, double PLQE, double thickness);
@@ -82,6 +84,7 @@ public:
     void ifPhotonRecycling(bool option);
     void RunSimulation(int times);
     void Output(const char *outputfilename);
+    double SampleUniformOnSphere(double &theta, double &phi, double thetamin = 0, double thetamax = M_PI);
 };
 
 #endif

@@ -11,9 +11,26 @@ double Reflectivity(double n1, double n2, double theta)
     double Rs, Rp;
     Rs = pow((n1 * cos(theta) - n2 * sqrt(1 - pow(n1 / n2 * sin(theta), 2))) / (n1 * cos(theta) + n2 * sqrt(1 - pow(n1 / n2 * sin(theta), 2))), 2);
     Rp = pow((n2 * cos(theta) - n1 * sqrt(1 - pow(n1 / n2 * sin(theta), 2))) / (n2 * cos(theta) + n1 * sqrt(1 - pow(n1 / n2 * sin(theta), 2))), 2);
-    // cout << Rs << " " << Rp << " " << n1 << " " << theta / M_PI * 180 << endl;
+
+    if (0.5 * (Rs + Rp) > 1)
+        cout << Rs << " " << Rp << " " << n1 << " " << theta / M_PI * 180 << " " << 0.5 * (Rs + Rp) << endl;
 
     return 0.5 * (Rs + Rp);
+}
+
+double Simulation::SampleUniformOnSphere(double &theta, double &phi, double thetamin, double thetamax)
+{
+    theta = -1;
+    while (theta <= thetamin || theta >= thetamax)
+    {
+        double x = My_Rnd.Gaus(0, 1);
+        double y = My_Rnd.Gaus(0, 1);
+        double z = My_Rnd.Gaus(0, 1);
+        double r = sqrt(x * x + y * y + z * z);
+        theta = acos(z / r);
+    }
+
+    phi = My_Rnd.Uniform(0, 2 * M_PI);
 }
 
 Simulation::Simulation()
@@ -30,7 +47,7 @@ Simulation::Simulation()
     DiffusionResolution = 0.2; // um
 
     PLQEint = 0.95; // PLQE
-    nout = 1.5;     // outside material's refraction index
+    nout = 1;       // outside material's refraction index
 
     seed = 11111;
 
@@ -123,7 +140,7 @@ void Simulation::ifPhotonRecycling(bool option)
 
 void Simulation::SetSeed(int Seed)
 {
-    seed = Seed;
+    My_Rnd.SetSeed(seed);
 }
 
 void Simulation::RunSimulation(int times)
@@ -131,7 +148,6 @@ void Simulation::RunSimulation(int times)
     NSim = times;
 
     //Initial variables
-    TRandom3 My_Rnd(seed);
     vector<EMObject> OutPhoton; // storage of output photon
                                 // Begin the Loop
     IncidentLambda = new TH1D("IncidentLambda", "IncidentLambda", 200, LightCentral - 5 * LightResolution, LightCentral + 5 * LightResolution);
@@ -160,9 +176,10 @@ void Simulation::RunSimulation(int times)
             if (fabs(LightPosition) < 1e-8)
             {
                 IncidentObject.d = Thickness;
-                IncidentObject.theta = My_Rnd.Uniform(0.499 * M_PI, 1.499 * M_PI); // here theta is the angle between its direction and positive z axis
-                // IncidentObject.theta = My_Rnd.Uniform(M_PI - 0.750245244, M_PI + 0.750245244); // here theta is the angle between its direction and positive z axis
-                // IncidentObject.theta = My_Rnd.Uniform(M_PI - 0.472326233, M_PI + 0.472326233); // here theta is the angle between its direction and positive z axis
+                // only lower half of the sphere
+                // SampleUniformOnSphere(IncidentObject.theta, IncidentObject.phi, 0.50001 * M_PI, M_PI); // here theta is the angle between its direction and positive z axis
+                // simulate photon injection
+                SampleUniformOnSphere(IncidentObject.theta, IncidentObject.phi, M_PI - 0.750245244, M_PI); // here theta is the angle between its direction and positive z axis
             }
             else
             {
@@ -172,16 +189,16 @@ void Simulation::RunSimulation(int times)
                     tempd = My_Rnd.Gaus(LightPosition, LightPositionResolution);
                 }
                 IncidentObject.d = tempd;
-                IncidentObject.theta = My_Rnd.Uniform(0, 2 * M_PI); // here theta is the angle between its direction and positive z axis
+                // On the whole sphere
+                SampleUniformOnSphere(IncidentObject.theta, IncidentObject.phi); // here theta is the angle between its direction and positive z axis
             }
         }
         else
         {
             PLQEint = 0;
             IncidentObject.d = Thickness;
-            IncidentObject.theta = My_Rnd.Uniform(0.499 * M_PI, 1.499 * M_PI); // here theta is the angle between its direction and positive z axis
-            // IncidentObject.theta = My_Rnd.Uniform(M_PI - 0.750245244, M_PI + 0.750245244); // here theta is the angle between its direction and positive z axis
-            // IncidentObject.theta = My_Rnd.Uniform(M_PI - 0.472326233, M_PI + 0.472326233); // here theta is the angle between its direction and positive z axis
+            // only lower half of the sphere
+            SampleUniformOnSphere(IncidentObject.theta, IncidentObject.phi, 0.50001 * M_PI, M_PI); // here theta is the angle between its direction and positive z axis
         }
 
         IncidentObject.isPhoton = true;
@@ -190,14 +207,16 @@ void Simulation::RunSimulation(int times)
         IncidentObject.isOut = false;
         IncidentObject.RecycleTime = 0;
         IncidentObject.ReflectionTime = 0;
-        IncidentObject.phi = My_Rnd.Uniform(0, M_PI);
         IncidentObject.TransverseX = 0;
         IncidentObject.TransverseY = 0;
 
         IncidentLambda->Fill(IncidentObject.lambda);
 
         if (doDebug)
+        {
             cout << "Generate Photon : lambda " << IncidentObject.lambda << " Position : " << IncidentObject.d << " Theta : " << IncidentObject.theta << " Phi :" << IncidentObject.phi << endl;
+            cout << "n material : " << Perovskite.n(IncidentObject.lambda) << endl;
+        }
 
         while (!IncidentObject.isOut && !IncidentObject.isEliminated)
         {
@@ -225,8 +244,6 @@ void Simulation::RunSimulation(int times)
                     {
                         // if the photon reach the lower surface, decide wheter it reflects or not
                         double possibility = My_Rnd.Rndm() - Reflectivity(Perovskite.n(IncidentObject.lambda), nout, IncidentObject.theta - M_PI);
-                        // possibility = 1; // assume light all goes out
-                        // possibility = My_Rnd.Uniform(-0.3, 0.7);
                         if (possibility > 0)
                         {
                             // the photon goes out
@@ -241,11 +258,8 @@ void Simulation::RunSimulation(int times)
                         }
                         else
                         {
-                            // the photon reflects and change into EI pair
                             IncidentObject.d = -IncidentObject.d;
-                            double temptheta;
-                            temptheta = IncidentObject.theta > M_PI ? 3 * M_PI - IncidentObject.theta : M_PI - IncidentObject.theta;
-                            IncidentObject.theta = temptheta;
+                            IncidentObject.theta = M_PI - IncidentObject.theta;
                             IncidentObject.ReflectionTime++;
                             tempreflectiontime++;
                             LastReflectionPosition = -1;
@@ -262,8 +276,8 @@ void Simulation::RunSimulation(int times)
 
                             if (doDebug)
                             {
-                                // cout << " Photon reflected on the lower surface" << endl;
-                                // cout << " Photon Position : " << IncidentObject.TransverseX << " " << IncidentObject.TransverseY << " " << IncidentObject.d << endl;
+                                cout << " Photon reflected on the lower surface" << endl;
+                                cout << " Photon Position : " << IncidentObject.TransverseX << " " << IncidentObject.TransverseY << " " << IncidentObject.d << endl;
                             }
                         }
                     }
@@ -271,33 +285,7 @@ void Simulation::RunSimulation(int times)
                     {
                         // if the photon reach the upper surface, just reflect back and change into EI pair
                         IncidentObject.d = 2 * Thickness - IncidentObject.d;
-                        double temptheta;
-                        temptheta = IncidentObject.theta > M_PI ? 3 * M_PI - IncidentObject.theta : M_PI - IncidentObject.theta;
-                        // add random angle to simulate roughness
-                        temptheta += My_Rnd.Uniform(-0.7889, 0.7889);
-                        // temptheta += My_Rnd.Gaus(0, 0.7889);
-                        if (temptheta > 2 * M_PI)
-                        {
-                            temptheta -= 2 * M_PI;
-                        }
-                        if (temptheta < 0)
-                        {
-                            temptheta = -temptheta;
-                        }
-                        while ((temptheta <= M_PI / 2 && temptheta >= 0) || (temptheta >= 3 * M_PI / 2 && temptheta <= 2 * M_PI))
-                        {
-                            temptheta += My_Rnd.Uniform(-0.7889, 0.7889);
-                            // temptheta += My_Rnd.Gaus(0, 0.7889);
-                            if (temptheta > 2 * M_PI)
-                            {
-                                temptheta -= 2 * M_PI;
-                            }
-                            if (temptheta < 0)
-                            {
-                                temptheta = -temptheta;
-                            }
-                        }
-                        IncidentObject.theta = temptheta;
+                        IncidentObject.theta = M_PI - IncidentObject.theta;
                         IncidentObject.ReflectionTime++;
                         tempreflectiontime++;
                         LastReflectionPosition = 1;
@@ -314,8 +302,8 @@ void Simulation::RunSimulation(int times)
 
                         if (doDebug)
                         {
-                            // cout << " Photon reflected on the upper surface " << endl;
-                            // cout << " Photon Position : " << IncidentObject.TransverseX << " " << IncidentObject.TransverseY << " " << IncidentObject.d << endl;
+                            cout << " Photon reflected on the upper surface " << endl;
+                            cout << " Photon Position : " << IncidentObject.TransverseX << " " << IncidentObject.TransverseY << " " << IncidentObject.d << endl;
                         }
                     }
                 }
@@ -352,8 +340,7 @@ void Simulation::RunSimulation(int times)
                 }
                 IncidentObject.isPhoton = false;
                 IncidentObject.isEIpair = true;
-                IncidentObject.theta = My_Rnd.Uniform(0, 2 * M_PI);
-                IncidentObject.phi = My_Rnd.Uniform(0, M_PI);
+                SampleUniformOnSphere(IncidentObject.theta, IncidentObject.phi);
             }
 
             if (IncidentObject.isEIpair)
@@ -465,47 +452,8 @@ void Simulation::RunSimulation(int times)
                 IncidentObject.isPhoton = true;
                 IncidentObject.isEIpair = false;
                 IncidentObject.lambda = My_Rnd.Gaus(LightCentral, LightResolution);
-                IncidentObject.theta = My_Rnd.Uniform(0, 2 * M_PI);
-                IncidentObject.phi = My_Rnd.Uniform(0, M_PI);
+                SampleUniformOnSphere(IncidentObject.theta, IncidentObject.phi);
                 IncidentObject.RecycleTime++;
-                /*
-                if (IncidentObject.d < 0 || IncidentObject.d > Thickness)
-                {
-                    // on the surface, the pair annihilates
-                    if (IncidentObject.d < 0)
-                    {
-                        double pout = My_Rnd.Rndm();
-                        if (pout < 0.5)
-                        {
-                            IncidentObject.isOut = true;
-                            NEIOut++;
-                            IncidentObject.theta = My_Rnd.Uniform(0.5 * M_PI, 1.5 * M_PI);
-                            continue;
-                        }
-                        else
-                        {
-                            double pdir = My_Rnd.Rndm();
-                            if (pdir < 0.5)
-                            {
-                                IncidentObject.theta = My_Rnd.Uniform(1.5 * M_PI, 2 * M_PI);
-                            }
-                            else
-                            {
-
-                                IncidentObject.theta = My_Rnd.Uniform(0, 0.5 * M_PI);
-                            }
-                            IncidentObject.d = 0;
-                            continue;
-                        }
-                    }
-                    else
-                    {
-                        IncidentObject.d = Thickness;
-                        IncidentObject.theta = My_Rnd.Uniform(0.5 * M_PI, 1.5 * M_PI);
-                        continue;
-                    }
-                }
-                    */
             }
         }
 
